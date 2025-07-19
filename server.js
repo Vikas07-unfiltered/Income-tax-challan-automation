@@ -202,10 +202,26 @@ app.use((error, req, res, next) => {
 
 const PORT = process.env.PORT || 3001;
 
+// Add global error handling
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit in production, just log the error
+  if (process.env.NODE_ENV !== 'production') {
+    process.exit(1);
+  }
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit in production, just log the error
+});
+
 server.listen(PORT, () => {
   console.log(`🚀 Income Tax Challan Automation Server running on port ${PORT}`);
   console.log(`📱 Access the web interface at: http://localhost:${PORT}`);
   console.log(`🏢 Company users can access at: http://[your-server-ip]:${PORT}`);
+  console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🤖 Cloud Platform: ${process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'}`);
 });
 
 module.exports = { app, server, io };

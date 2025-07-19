@@ -6,6 +6,9 @@ const fs = require('fs');
 
 puppeteer.use(StealthPlugin());
 
+// Cloud platform detection
+const isCloudPlatform = process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.HEROKU_APP_NAME;
+
 const EXCEL_FILE = 'IncomeTax_Challan_Template.xlsx';
 // Create date-based folder name (DD-MM-YYYY format)
 const today = new Date();
@@ -2185,16 +2188,34 @@ async function main() {
   // Setup headers for new columns
   await setupExcelHeaders(sheet);
 
-  const browser = await puppeteer.launch({
-    headless: false,
+  // Configure browser for cloud platforms
+  const browserConfig = {
+    headless: isCloudPlatform ? true : false,
     defaultViewport: null,
     args: [
-      '--start-maximized',
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-extensions',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
       `--download-default-directory=${DOWNLOAD_DIR}`,
       '--disable-web-security',
       '--allow-running-insecure-content'
     ]
-  });
+  };
+  
+  // Add maximized window for local development
+  if (!isCloudPlatform) {
+    browserConfig.args.push('--start-maximized');
+  }
+  
+  const browser = await puppeteer.launch(browserConfig);
 
   // We'll create a new page for each row instead of reusing one page
   let currentPage = null;
