@@ -20,6 +20,11 @@ const io = new Server(server, {
   }
 });
 
+// Trust proxy for Railway/Heroku/cloud platforms
+if (process.env.RAILWAY_ENVIRONMENT || process.env.HEROKU_APP_NAME || process.env.RENDER) {
+  app.set('trust proxy', 1);
+}
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: false // Allow inline scripts for our app
@@ -30,7 +35,8 @@ app.use(cors());
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 100, // limit each IP to 100 requests per windowMs
+  trustProxy: process.env.RAILWAY_ENVIRONMENT || process.env.HEROKU_APP_NAME || process.env.RENDER
 });
 app.use(limiter);
 
@@ -69,6 +75,18 @@ const upload = multer({
   limits: {
     fileSize: 10 * 1024 * 1024 // 10MB limit
   }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    platform: process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local',
+    node_version: process.version,
+    uptime: process.uptime()
+  });
 });
 
 // Routes

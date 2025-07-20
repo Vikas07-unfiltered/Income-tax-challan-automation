@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Income Tax Challan Automation - Company Portal</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --success-color: #27ae60;
+            --warning-color: #f39c12;
+            --danger-color: #e74c3c;
+            --light-bg: #ecf0f1;
+        }
+
+        body {
+            background: linear-gradient(135deg, var(--light-bg) 0%, #bdc3c7 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+        }
+
+        .main-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .upload-section {
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .progress-section {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .file-drop-zone {
+            border: 3px dashed var(--secondary-color);
+            border-radius: 15px;
+            padding: 60px 20px;
+            text-align: center;
+            background: #f8f9fa;
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .file-drop-zone:hover {
+            border-color: var(--primary-color);
+            background: #e9ecef;
+        }
+
+        .file-drop-zone.dragover {
+            border-color: var(--success-color);
+            background: #d4edda;
+        }
+
+        .progress-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            border-left: 4px solid var(--secondary-color);
+        }
+
+        .progress-item.success {
+            border-left-color: var(--success-color);
+            background: #d4edda;
+        }
+
+        .progress-item.error {
+            border-left-color: var(--danger-color);
+            background: #f8d7da;
+        }
+
+        .download-section {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            display: none;
+        }
+
+        .download-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: transform 0.3s ease;
+        }
+
+        .download-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .btn-custom {
+            background: linear-gradient(135deg, var(--secondary-color) 0%, var(--primary-color) 100%);
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            color: white;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-custom:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            color: white;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--secondary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .log-container {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 20px;
+            border-radius: 10px;
+            font-family: 'Courier New', monospace;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 5px 0;
+            border-bottom: 1px solid #34495e;
+        }
+
+        .timestamp {
+            color: #95a5a6;
+            font-size: 0.8em;
+        }
+    </style>
+</head>
+<body>
+    <div class="main-container">
+        <!-- Header -->
+        <div class="header text-center">
+            <h1><i class="fas fa-file-invoice-dollar"></i> Income Tax Challan Automation</h1>
+            <p class="lead mb-0">Company-Wide Portal for Automated Challan Processing</p>
+            <small>Upload your Excel file and let our system handle the rest</small>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="upload-section" id="uploadSection">
+            <h3 class="text-center mb-4"><i class="fas fa-cloud-upload-alt"></i> Upload Excel File</h3>
+            
+            <div class="file-drop-zone" id="dropZone">
+                <i class="fas fa-file-excel fa-4x text-success mb-3"></i>
+                <h4>Drag & Drop your Excel file here</h4>
+                <p class="text-muted">or click to browse files</p>
+                <button type="button" class="btn btn-custom mt-3" onclick="document.getElementById('fileInput').click()">
+                    <i class="fas fa-folder-open"></i> Browse Files
+                </button>
+                <input type="file" id="fileInput" accept=".xlsx" style="display: none;">
+            </div>
+
+            <div class="text-center mt-4">
+                <div class="mb-3">
+                    <button class="btn btn-outline-primary" id="downloadTemplate">
+                        <i class="fas fa-download"></i> Download Excel Template
+                    </button>
+                </div>
+                <p class="text-muted mb-3">Requirements:</p>
+                <ul class="list-unstyled text-start d-inline-block">
+                    <li><i class="fas fa-check text-success"></i> Excel file (.xlsx format)</li>
+                    <li><i class="fas fa-check text-success"></i> Contains company details, PAN, User ID, Password</li>
+                    <li><i class="fas fa-check text-success"></i> Tax amounts in specified columns</li>
+                    <li><i class="fas fa-check text-success"></i> Maximum file size: 10MB</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div class="progress-section" id="progressSection">
+            <h3><i class="fas fa-cogs"></i> Processing Status</h3>
+            
+            <div class="progress mb-3">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                     id="progressBar" role="progressbar" style="width: 0%"></div>
+            </div>
+            
+            <div id="currentStatus" class="text-center mb-3">
+                <span class="spinner"></span> Initializing...
+            </div>
+
+            <div class="stats-grid" id="statsGrid" style="display: none;">
+                <div class="stat-card">
+                    <div class="stat-number text-primary" id="processedCount">0</div>
+                    <div class="text-muted">Processed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number text-success" id="successCount">0</div>
+                    <div class="text-muted">Successful</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number text-danger" id="failedCount">0</div>
+                    <div class="text-muted">Failed</div>
+                </div>
+            </div>
+
+            <div class="log-container" id="logContainer">
+                <div class="log-entry">
+                    <span class="timestamp">[System]</span> Waiting for processing to begin...
+                </div>
+            </div>
+        </div>
+
+        <!-- Download Section -->
+        <div class="download-section" id="downloadSection">
+            <h3 class="text-center mb-4"><i class="fas fa-download"></i> Download Results</h3>
+            
+            <div class="row">
+                <div class="col-md-4">
+                    <div class="download-card">
+                        <i class="fas fa-file-excel fa-3x mb-3"></i>
+                        <h5>Processed Excel</h5>
+                        <p>Updated Excel file with challan details</p>
+                        <button class="btn btn-light" id="downloadExcel">
+                            <i class="fas fa-download"></i> Download
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="download-card">
+                        <i class="fas fa-file-pdf fa-3x mb-3"></i>
+                        <h5>Challan PDFs</h5>
+                        <p>ZIP file containing all generated PDFs</p>
+                        <button class="btn btn-light" id="downloadPDFs">
+                            <i class="fas fa-download"></i> Download
+                        </button>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="download-card">
+                        <i class="fas fa-file-alt fa-3x mb-3"></i>
+                        <h5>Summary Report</h5>
+                        <p>Detailed processing report</p>
+                        <button class="btn btn-light" id="downloadReport">
+                            <i class="fas fa-download"></i> Download
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center mt-4">
+                <button class="btn btn-custom" onclick="resetForm()">
+                    <i class="fas fa-plus"></i> Process Another File
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
