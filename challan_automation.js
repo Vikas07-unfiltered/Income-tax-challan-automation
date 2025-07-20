@@ -7,7 +7,13 @@ const fs = require('fs');
 puppeteer.use(StealthPlugin());
 
 // Cloud platform detection
-const isCloudPlatform = process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.HEROKU_APP_NAME;
+const isCloudPlatform = process.env.RAILWAY_ENVIRONMENT || process.env.RENDER || process.env.HEROKU_APP_NAME || process.env.NODE_ENV === 'production' || process.env.PORT;
+console.log('🌐 Environment Detection:');
+console.log(`  - RAILWAY_ENVIRONMENT: ${process.env.RAILWAY_ENVIRONMENT || 'Not set'}`);
+console.log(`  - NODE_ENV: ${process.env.NODE_ENV || 'Not set'}`);
+console.log(`  - PORT: ${process.env.PORT || 'Not set'}`);
+console.log(`  - Is Cloud Platform: ${isCloudPlatform ? 'Yes' : 'No'}`);
+console.log('');
 
 const EXCEL_FILE = 'IncomeTax_Challan_Template.xlsx';
 // Create date-based folder name (DD-MM-YYYY format)
@@ -143,145 +149,152 @@ async function openMatSelectDropdown(page, identifier, timeout = 10000) {
   return false;
 }
 
-async function login(page, userId, password) {
-  try {
-    // Ensure userId and password are strings
-    const safeUserId = userId ? String(userId).trim() : '';
-    const safePassword = password ? String(password).trim() : '';
-    
-    console.log('=== LOGIN PROCESS STARTED ===');
-    console.log(`User ID: ${safeUserId}`);
-    console.log(`Password: ${safePassword ? '[PROVIDED]' : '[MISSING]'}`);
-    console.log(`User ID type: ${typeof safeUserId}, Password type: ${typeof safePassword}`);
-    
-    console.log('Navigating to portal...');
-    await page.goto(PORTAL_URL, { waitUntil: 'networkidle2' });
-    await delay(3000);
-
-    console.log('Clicking login button...');
-    const loginButton = await page.$("a.login[aria-label='Login button']");
-    if (!loginButton) throw new Error("Login button not found");
-    await loginButton.click();
-    await delay(3000);
-
-    console.log('Entering User ID...');
+async function login(page, userId, password, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      await page.waitForSelector("input[placeholder*='User ID']", { timeout: 10000 });
-      await page.type("input[placeholder*='User ID']", safeUserId);
-      await delay(1000);
-      console.log('✓ User ID entered successfully');
-    } catch (err) {
-      console.log('✗ Error entering User ID:', err.message);
-      throw err;
-    }
-
-    console.log('Clicking Continue after User ID...');
-    try {
-      const continueButtons = await page.$$('button span');
-      let continueBtnFound = false;
-      for (const span of continueButtons) {
-        const text = await page.evaluate(el => {
-          if (el && el.textContent !== null && el.textContent !== undefined) {
-            const content = String(el.textContent).trim();
-            return content;
-          }
-          return '';
-        }, span);
-        if (text === 'Continue') {
-          await span.click();
-          continueBtnFound = true;
-          break;
-        }
-      }
-      if (!continueBtnFound) throw new Error("Continue button not found after User ID");
-      await delay(4000);
-      console.log('✓ Continue button clicked successfully');
-    } catch (err) {
-      console.log('✗ Error clicking Continue button:', err.message);
-      throw err;
-    }
-
-    console.log('Checking for errors...');
-    const errorBox = await page.$("mat-error");
-    if (errorBox) {
-      const errorText = await page.evaluate(el => {
-        if (el && el.textContent) {
-          return typeof el.textContent === 'string' ? el.textContent.trim() : String(el.textContent).trim();
-        }
-        return '';
-      }, errorBox);
-      if (errorText && typeof errorText === 'string' && errorText.toLowerCase().includes("does not exist")) {
-        throw new Error("PAN/User ID does not exist");
-      }
-    }
-
-    console.log('Clicking checkbox...');
-    const checkbox = await page.$("input[type='checkbox']");
-    if (checkbox) await checkbox.click();
-    else throw new Error("Secure message checkbox not found");
-    await delay(1000);
-
-    console.log('Entering password...');
-    try {
-      await page.waitForSelector("input[type='password']", { timeout: 10000 });
-      await delay(2000); // Wait for field to be ready
-      await page.click("input[type='password']"); // Click to focus
-      await delay(500);
-      await page.type("input[type='password']", safePassword);
-      await delay(3000); // Wait after typing password
-      console.log('✓ Password entered successfully');
-    } catch (err) {
-      console.log('✗ Error entering password:', err.message || err);
-      throw err;
-    }
-
-    // Click final continue button after password entry
-    console.log('Clicking final Continue button...');
-    try {
-      await delay(1000); // Extra wait before looking for continue button
-      const finalContinueButtons = await page.$$('button span');
-      let finalContinueFound = false;
+      // Ensure userId and password are strings
+      const safeUserId = userId ? String(userId).trim() : '';
+      const safePassword = password ? String(password).trim() : '';
       
-      for (let i = 0; i < finalContinueButtons.length; i++) {
-        try {
-          const span = finalContinueButtons[i];
-          const text = await page.evaluate(el => {
-            try {
-              if (el && el.textContent !== null && el.textContent !== undefined) {
-                return String(el.textContent).trim();
-              }
-              return '';
-            } catch (evalErr) {
-              console.log('Text evaluation error:', evalErr.message);
-              return '';
-            }
-          }, span);
-          
-          if (text === 'Continue') {
-            console.log('Found final Continue button, clicking...');
-            await span.click();
-            finalContinueFound = true;
-            break;
+      console.log(`=== LOGIN PROCESS STARTED (Attempt ${attempt}/${maxRetries}) ===`);
+      console.log(`User ID: ${safeUserId}`);
+      console.log(`Password: ${safePassword ? '[PROVIDED]' : '[MISSING]'}`);
+      console.log(`User ID type: ${typeof safeUserId}, Password type: ${typeof safePassword}`);
+      
+      // Check if page is still valid before navigation
+      if (page.isClosed()) {
+        throw new Error('Page is closed, cannot proceed with login');
+      }
+      
+      console.log('Navigating to portal...');
+      try {
+        // Use different wait strategies for cloud vs local
+        const waitUntil = isCloudPlatform ? 'domcontentloaded' : 'networkidle2';
+        const timeout = isCloudPlatform ? 60000 : 30000;
+        
+        await page.goto(PORTAL_URL, { 
+          waitUntil: waitUntil, 
+          timeout: timeout 
+        });
+        
+        // Additional wait for cloud platforms
+        const delayTime = isCloudPlatform ? 5000 : 3000;
+        await delay(delayTime);
+        
+        // Verify page loaded properly
+        await page.waitForSelector('body', { timeout: 15000 });
+        
+      } catch (navError) {
+        if (navError.message.includes('detached') || navError.message.includes('closed') || navError.message.includes('frame')) {
+          console.log(`Navigation error on attempt ${attempt}: ${navError.message}`);
+          if (attempt < maxRetries) {
+            const retryDelay = isCloudPlatform ? 5000 : 2000;
+            console.log(`⏳ Waiting ${retryDelay}ms before navigation retry...`);
+            await delay(retryDelay);
+            continue;
           }
-        } catch (spanErr) {
-          console.log(`Error processing span ${i}:`, spanErr.message);
+        }
+        throw navError;
+      }
+
+      // Validate page state before proceeding
+      try {
+        await page.waitForSelector('body', { timeout: 10000 });
+      } catch (bodyError) {
+        console.log(`Page body not ready on attempt ${attempt}: ${bodyError.message}`);
+        if (attempt < maxRetries) {
+          await delay(2000);
           continue;
         }
+        throw bodyError;
       }
       
-      if (!finalContinueFound) throw new Error("Final Continue button not found");
-      console.log('✓ Final Continue button clicked successfully');
-      // Wait longer for the dual login popup to appear
-      await delay(7000);
-    } catch (continueErr) {
-      console.log('✗ Error clicking final Continue button:', continueErr.message || continueErr);
-      throw continueErr;
-    }
+      console.log('Clicking login button...');
+      try {
+        const loginButton = await page.$("a.login[aria-label='Login button']");
+        if (!loginButton) throw new Error("Login button not found");
+        await loginButton.click();
+        await delay(3000);
+      } catch (loginBtnError) {
+        if (loginBtnError.message.includes('detached') || loginBtnError.message.includes('closed')) {
+          console.log(`Login button click error on attempt ${attempt}: ${loginBtnError.message}`);
+          if (attempt < maxRetries) {
+            await delay(2000);
+            continue;
+          }
+        }
+        throw loginBtnError;
+      }
 
-    // Robust error extraction and logging after password entry
-    try {
-      console.log('Checking for login error messages after password...');
-      const errorBox = await page.$("mat-error, .mat-error, .error-message, .alert-danger");
+      console.log('Entering User ID...');
+      try {
+        await page.waitForSelector("input[placeholder*='User ID']", { timeout: 15000 });
+        
+        // Check if page is still valid before typing
+        if (page.isClosed()) {
+          throw new Error('Page closed during User ID entry');
+        }
+        
+        await page.type("input[placeholder*='User ID']", safeUserId);
+        await delay(1000);
+        console.log('✓ User ID entered successfully');
+      } catch (err) {
+        console.log('✗ Error entering User ID:', err.message);
+        if (err.message.includes('detached') || err.message.includes('closed')) {
+          console.log(`User ID entry error on attempt ${attempt}: ${err.message}`);
+          if (attempt < maxRetries) {
+            await delay(2000);
+            continue;
+          }
+        }
+        throw err;
+      }
+
+      console.log('Clicking Continue after User ID...');
+      try {
+        // Check if page is still valid
+        if (page.isClosed()) {
+          throw new Error('Page closed during Continue button click');
+        }
+        
+        const continueButtons = await page.$$('button span');
+        let continueBtnFound = false;
+        for (const span of continueButtons) {
+          try {
+            const text = await page.evaluate(el => {
+              if (el && el.textContent !== null && el.textContent !== undefined) {
+                const content = String(el.textContent).trim();
+                return content;
+              }
+              return '';
+            }, span);
+            if (text === 'Continue') {
+              await span.click();
+              continueBtnFound = true;
+              break;
+            }
+          } catch (evalError) {
+            // Skip this button if evaluation fails
+            continue;
+          }
+        }
+        if (!continueBtnFound) throw new Error("Continue button not found after User ID");
+        await delay(4000);
+        console.log('✓ Continue button clicked successfully');
+      } catch (err) {
+        console.log('✗ Error clicking Continue button:', err.message);
+        if (err.message.includes('detached') || err.message.includes('closed')) {
+          console.log(`Continue button error on attempt ${attempt}: ${err.message}`);
+          if (attempt < maxRetries) {
+            await delay(2000);
+            continue;
+          }
+        }
+        throw err;
+      }
+
+      console.log('Checking for errors...');
+      const errorBox = await page.$("mat-error");
       if (errorBox) {
         const errorText = await page.evaluate(el => {
           if (el && el.textContent) {
@@ -289,57 +302,195 @@ async function login(page, userId, password) {
           }
           return '';
         }, errorBox);
-        console.log('Extracted errorText:', errorText, 'Type:', typeof errorText);
         if (errorText && typeof errorText === 'string' && errorText.toLowerCase().includes("does not exist")) {
           throw new Error("PAN/User ID does not exist");
         }
-      } else {
-        console.log('No error box found after password entry.');
       }
-    } catch (err) {
-      console.log('Error during errorBox extraction:', err.message || err);
-    }
 
-    // Only click 'Login Here' if it is present, otherwise proceed immediately
-    console.log('Checking for Dual Login popup in modal-footer...');
-    let dualLoginHandled = false;
-    try {
-      // Try to get all primary buttons inside the modal footer (do not wait if not present)
-      const buttons = await page.$$('div.modal-footer button.primaryButton');
-      console.log(`Found ${buttons.length} primaryButton(s) in .modal-footer`);
-      for (const button of buttons) {
-        const text = await page.evaluate(el => {
-          if (el && el.textContent !== null && el.textContent !== undefined) {
-            const content = String(el.textContent).trim();
-            return content;
+      console.log('Clicking checkbox...');
+      const checkbox = await page.$("input[type='checkbox']");
+      if (checkbox) await checkbox.click();
+      else throw new Error("Secure message checkbox not found");
+      await delay(1000);
+
+      console.log('Entering password...');
+      try {
+        await page.waitForSelector("input[type='password']", { timeout: 15000 });
+        
+        // Check if page is still valid
+        if (page.isClosed()) {
+          throw new Error('Page closed during password entry');
+        }
+        
+        await delay(2000); // Wait for field to be ready
+        await page.click("input[type='password']"); // Click to focus
+        await delay(500);
+        await page.type("input[type='password']", safePassword);
+        await delay(3000); // Wait after typing password
+        console.log('✓ Password entered successfully');
+      } catch (err) {
+        console.log('✗ Error entering password:', err.message || err);
+        if (err.message.includes('detached') || err.message.includes('closed')) {
+          console.log(`Password entry error on attempt ${attempt}: ${err.message}`);
+          if (attempt < maxRetries) {
+            await delay(2000);
+            continue;
           }
-          return '';
-        }, button);
-        console.log(`Button text: '${text}'`);
-        if (text === "Login Here") {
-          console.log(`Dual Login Detected popup found. Clicking Login Here.`);
-          await button.click();
-          await delay(4000); // Wait for login to complete
-          dualLoginHandled = true;
-          break;
+        }
+        throw err;
+      }
+
+      // Click final continue button after password entry
+      console.log('Clicking final Continue button...');
+      try {
+        // Check if page is still valid
+        if (page.isClosed()) {
+          throw new Error('Page closed during final Continue button click');
+        }
+        
+        await delay(1000); // Extra wait before looking for continue button
+        const finalContinueButtons = await page.$$('button span');
+        let finalContinueFound = false;
+        
+        for (let i = 0; i < finalContinueButtons.length; i++) {
+          try {
+            const span = finalContinueButtons[i];
+            const text = await page.evaluate(el => {
+              try {
+                if (el && el.textContent !== null && el.textContent !== undefined) {
+                  return String(el.textContent).trim();
+                }
+                return '';
+              } catch (evalErr) {
+                console.log('Text evaluation error:', evalErr.message);
+                return '';
+              }
+            }, span);
+            
+            if (text === 'Continue') {
+              console.log('Found final Continue button, clicking...');
+              await span.click();
+              finalContinueFound = true;
+              break;
+            }
+          } catch (spanErr) {
+            console.log(`Error processing span ${i}:`, spanErr.message);
+            continue;
+          }
+        }
+        
+        if (!finalContinueFound) throw new Error("Final Continue button not found");
+        console.log('✓ Final Continue button clicked successfully');
+        // Wait longer for the dual login popup to appear
+        await delay(7000);
+      } catch (continueErr) {
+        console.log('✗ Error clicking final Continue button:', continueErr.message);
+        if (continueErr.message.includes('detached') || continueErr.message.includes('closed')) {
+          console.log(`Final continue error on attempt ${attempt}: ${continueErr.message}`);
+          if (attempt < maxRetries) {
+            await delay(2000);
+            continue;
+          }
+        }
+        throw continueErr;
+      }
+      
+      // Robust error extraction and logging after password entry
+      try {
+        console.log('Checking for login error messages after password...');
+        const errorBox = await page.$("mat-error, .mat-error, .error-message, .alert-danger");
+        if (errorBox) {
+          const errorText = await page.evaluate(el => {
+            if (el && el.textContent) {
+              return typeof el.textContent === 'string' ? el.textContent.trim() : String(el.textContent).trim();
+            }
+            return '';
+          }, errorBox);
+          if (errorText && typeof errorText === 'string' && errorText.trim() !== '') {
+            console.log(`Login error detected: ${errorText}`);
+            throw new Error(`Login failed: ${errorText}`);
+          }
+        }
+      } catch (err) {
+        console.log('Error during errorBox extraction:', err.message || err);
+      }
+
+      // Only click 'Login Here' if it is present, otherwise proceed immediately
+      console.log('Checking for Dual Login popup in modal-footer...');
+      let dualLoginHandled = false;
+      try {
+        // Check if page is still valid
+        if (page.isClosed()) {
+          throw new Error('Page closed during dual login check');
+        }
+        
+        // Try to get all primary buttons inside the modal footer (do not wait if not present)
+        const buttons = await page.$$('div.modal-footer button.primaryButton');
+        console.log(`Found ${buttons.length} primaryButton(s) in .modal-footer`);
+        for (const button of buttons) {
+          try {
+            const text = await page.evaluate(el => {
+              if (el && el.textContent !== null && el.textContent !== undefined) {
+                const content = String(el.textContent).trim();
+                return content;
+              }
+              return '';
+            }, button);
+            console.log(`Button text: '${text}'`);
+            if (text === "Login Here") {
+              console.log(`Dual Login Detected popup found. Clicking Login Here.`);
+              await button.click();
+              await delay(4000); // Wait for login to complete
+              dualLoginHandled = true;
+              break;
+            }
+          } catch (btnError) {
+            console.log('Error processing dual login button:', btnError.message);
+            continue;
+          }
+        }
+        if (!dualLoginHandled) {
+          console.log('Login Here button not found, proceeding to next steps.');
+        }
+      } catch (error) {
+        console.log('Error checking/clicking Login Here:', error.message);
+        if (error.message.includes('detached') || error.message.includes('closed')) {
+          console.log(`Dual login error on attempt ${attempt}: ${error.message}`);
+          if (attempt < maxRetries) {
+            await delay(2000);
+            continue;
+          }
         }
       }
-      if (!dualLoginHandled) {
-        console.log('Login Here button not found, proceeding to next steps.');
-      }
-    } catch (error) {
-      console.log('Error checking/clicking Login Here:', error.message);
-    }
 
-    // Relaxed login validation: always proceed to next steps after attempting login
-    await delay(6000); // Wait for dashboard/menu to load
-    console.log('Proceeding to post-login steps...');
-    return true;
-  } catch (error) {
-    const errorMsg = error && error.message ? error.message : (error ? String(error) : 'Unknown error');
-    console.error(`Login Error: ${errorMsg}`);
-    return false;
+      // Relaxed login validation: always proceed to next steps after attempting login
+      await delay(6000); // Wait for dashboard/menu to load
+      console.log('Proceeding to post-login steps...');
+      console.log(`✅ Login completed successfully on attempt ${attempt}`);
+      return true;
+      
+    } catch (error) {
+      const errorMsg = error && error.message ? error.message : (error ? String(error) : 'Unknown error');
+      console.log(`❌ Login attempt ${attempt} failed: ${errorMsg}`);
+      
+      // If this is not the last attempt and it's a detachment error, continue to retry
+      if (attempt < maxRetries && (errorMsg.includes('detached') || errorMsg.includes('closed') || errorMsg.includes('Protocol error'))) {
+        console.log(`Retrying login in 3 seconds... (${maxRetries - attempt} attempts remaining)`);
+        await delay(3000);
+        continue;
+      }
+      
+      // If it's the last attempt or a non-retryable error, return false
+      if (attempt === maxRetries) {
+        console.error(`❌ All ${maxRetries} login attempts failed. Final error: ${errorMsg}`);
+      }
+      return false;
+    }
   }
+  
+  // If we get here, all attempts failed
+  console.error(`❌ Login failed after ${maxRetries} attempts`);
+  return false;
 }
 
 // Function to click e-File button on ITR page
@@ -2180,6 +2331,207 @@ async function setupExcelHeaders(sheet) {
   }
 }
 
+// Browser management functions
+async function createBrowser(maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const browserConfig = {
+        headless: isCloudPlatform ? 'new' : false, // Use new headless mode for better stability
+        defaultViewport: { width: 1366, height: 768 }, // Set explicit viewport for consistency
+        timeout: 120000, // Increase timeout for cloud platforms
+        protocolTimeout: 120000, // Add protocol timeout
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-first-run',
+          '--disable-extensions',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-web-security',
+          '--allow-running-insecure-content',
+          '--disable-features=VizDisplayCompositor',
+          '--disable-ipc-flooding-protection',
+          '--memory-pressure-off',
+          '--max_old_space_size=4096',
+          '--disable-background-networking',
+          '--disable-default-apps',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--no-crash-upload',
+          '--disable-crash-reporter'
+        ]
+      };
+      
+      // Cloud platform specific optimizations
+      if (isCloudPlatform) {
+        browserConfig.args.push(
+          '--disable-software-rasterizer',
+          '--disable-background-media-suspend',
+          '--disable-client-side-phishing-detection',
+          '--disable-component-update',
+          '--disable-domain-reliability',
+          '--disable-features=AudioServiceOutOfProcess',
+          '--disable-hang-monitor',
+          '--disable-prompt-on-repost',
+          '--disable-translate',
+          '--hide-scrollbars',
+          '--mute-audio',
+          '--no-default-browser-check',
+          '--no-pings',
+          '--disable-logging',
+          '--disable-permissions-api',
+          '--single-process' // Only use single-process on cloud
+        );
+      } else {
+        // Local development optimizations
+        browserConfig.args.push(
+          '--start-maximized',
+          `--download-default-directory=${DOWNLOAD_DIR}`
+        );
+      }
+      
+      console.log(`🚀 Launching browser (attempt ${attempt}/${maxRetries})...`);
+      console.log(`📊 Cloud Platform: ${isCloudPlatform ? 'Yes' : 'No'}`);
+      
+      const browser = await puppeteer.launch(browserConfig);
+      
+      // Test browser health immediately after creation
+      const isHealthy = await checkBrowserHealth(browser);
+      if (!isHealthy) {
+        await browser.close();
+        throw new Error('Browser failed health check after creation');
+      }
+      
+      console.log('✅ Browser launched successfully');
+      return browser;
+    } catch (error) {
+      console.log(`❌ Browser launch attempt ${attempt} failed: ${error.message}`);
+      
+      if (attempt === maxRetries) {
+        throw new Error(`Failed to create browser after ${maxRetries} attempts: ${error.message}`);
+      }
+      
+      // Exponential backoff for retries
+      const waitTime = Math.min(5000 * Math.pow(2, attempt - 1), 30000);
+      console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+      await delay(waitTime);
+    }
+  }
+}
+
+async function checkBrowserHealth(browser) {
+  try {
+    if (!browser || !browser.isConnected()) {
+      return false;
+    }
+    // Try to get browser version as a health check
+    await browser.version();
+    return true;
+  } catch (error) {
+    console.log('⚠️ Browser health check failed:', error.message);
+    return false;
+  }
+}
+
+async function createNewPageSafely(browser, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`📄 Creating new page (attempt ${attempt}/${maxRetries})...`);
+      
+      // Check browser health first
+      const isHealthy = await checkBrowserHealth(browser);
+      if (!isHealthy) {
+        throw new Error('Browser is not healthy');
+      }
+      
+      // Create page with extended timeout for cloud platforms
+      const timeoutMs = isCloudPlatform ? 60000 : 30000;
+      const page = await Promise.race([
+        browser.newPage(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Page creation timeout')), timeoutMs)
+        )
+      ]);
+      
+      // Configure page settings for stability
+      const navigationTimeout = isCloudPlatform ? 60000 : 30000;
+      const defaultTimeout = isCloudPlatform ? 45000 : 30000;
+      
+      await page.setDefaultTimeout(defaultTimeout);
+      await page.setDefaultNavigationTimeout(navigationTimeout);
+      
+      // Set user agent to avoid detection
+      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+      
+      // Additional cloud platform optimizations
+      if (isCloudPlatform) {
+        // Disable images and CSS to reduce load
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+          const resourceType = req.resourceType();
+          if (resourceType === 'image' || resourceType === 'stylesheet' || resourceType === 'font') {
+            req.abort();
+          } else {
+            req.continue();
+          }
+        });
+        
+        // Set viewport explicitly
+        await page.setViewport({ width: 1366, height: 768 });
+        
+        // Add error handling for page crashes
+        page.on('error', (error) => {
+          console.log('⚠️ Page error:', error.message);
+        });
+        
+        page.on('pageerror', (error) => {
+          console.log('⚠️ Page script error:', error.message);
+        });
+      }
+      
+      console.log('✅ New page created successfully');
+      return page;
+    } catch (error) {
+      console.log(`❌ Failed to create page (attempt ${attempt}): ${error.message}`);
+      
+      if (attempt === maxRetries) {
+        throw new Error(`Failed to create page after ${maxRetries} attempts: ${error.message}`);
+      }
+      
+      // Wait before retry with exponential backoff
+      const waitTime = Math.min(3000 * Math.pow(2, attempt - 1), 15000);
+      console.log(`⏳ Waiting ${waitTime}ms before page creation retry...`);
+      await delay(waitTime);
+    }
+  }
+}
+
+async function closePageSafely(page) {
+  if (!page) {
+    return;
+  }
+  
+  try {
+    if (!page.isClosed()) {
+      console.log('🔄 Closing current page...');
+      await page.close();
+      console.log('✅ Page closed successfully');
+      await delay(1000);
+    }
+  } catch (closeErr) {
+    console.log('⚠️ Error closing page:', closeErr.message);
+    // Try to force close if normal close fails
+    try {
+      await page.evaluate(() => window.close());
+    } catch (forceCloseErr) {
+      console.log('⚠️ Could not force close page:', forceCloseErr.message);
+    }
+  }
+}
+
 async function main() {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(EXCEL_FILE);
@@ -2188,34 +2540,7 @@ async function main() {
   // Setup headers for new columns
   await setupExcelHeaders(sheet);
 
-  // Configure browser for cloud platforms
-  const browserConfig = {
-    headless: isCloudPlatform ? true : false,
-    defaultViewport: null,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-extensions',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      `--download-default-directory=${DOWNLOAD_DIR}`,
-      '--disable-web-security',
-      '--allow-running-insecure-content'
-    ]
-  };
-  
-  // Add maximized window for local development
-  if (!isCloudPlatform) {
-    browserConfig.args.push('--start-maximized');
-  }
-  
-  const browser = await puppeteer.launch(browserConfig);
+  let browser = await createBrowser();
 
   // We'll create a new page for each row instead of reusing one page
   let currentPage = null;
@@ -2270,164 +2595,202 @@ async function main() {
 
     console.log(`Processing: ${company}`);
     
-    // Create a new page for this row
-    console.log('Creating new page for this row...');
-    currentPage = await browser.newPage();
-    
-    // Set download behavior for the new page
+    // Wrap entire row processing in try-catch for robust error handling
     try {
-      const client = await currentPage.target().createCDPSession();
-      await client.send('Page.setDownloadBehavior', {
-        behavior: 'allow',
-        downloadPath: DOWNLOAD_DIR
-      });
-      console.log('✓ Download behavior configured for new page');
-      console.log(`✓ PDFs will be saved to: ${DOWNLOAD_DIR}`);
-    } catch (downloadConfigError) {
-      console.log('⚠️ Could not configure download behavior:', downloadConfigError.message);
-      console.log('⚠️ PDFs may go to default download folder - will attempt to move them');
-    }
-    
-    // Patch for Node.js 22 to add $x support for the new page
-    if (!currentPage.$x) {
-      currentPage.$x = async function (expression) {
-        return await this.evaluateHandle((exp) => {
-          return document.evaluate(exp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        }, expression).then(async (handle) => {
-          const length = await (await handle.getProperty('snapshotLength')).jsonValue();
-          const results = [];
-          for (let i = 0; i < length; i++) {
-            const elHandle = await handle.evaluateHandle((h, index) => h.snapshotItem(index), i);
-            results.push(elHandle);
+      // Create a new page for this row with error handling
+      try {
+        currentPage = await createNewPageSafely(browser);
+      } catch (pageError) {
+        console.log('❌ Failed to create new page, attempting browser restart...');
+        
+        try {
+          // Close the old browser if it exists
+          if (browser && browser.isConnected()) {
+            await browser.close();
           }
-          return results;
-        });
-      };
-    }
-    
-    console.log(`PDF will be saved to: ${DOWNLOAD_DIR}`);
-    
-    const success = await login(currentPage, userId, password);
-
-    if (!success) {
-      row.getCell(15).value = 'Login failed';
-      continue;
-    }
-
-    // Navigate to E-Pay Tax after login
-    if (success) {
-      // First, check if we're on the ITR page and need to click e-File
-      console.log('Checking current page after login...');
-      await delay(3000);
-      
-      // Check if we're on the ITR page by looking for the e-File button
-      const eFileButton = await currentPage.$('#e-File');
-      if (eFileButton) {
-        console.log('Detected ITR page, clicking e-File button...');
-        const eFileClicked = await clickEFileButton(currentPage);
-        if (!eFileClicked) {
-          console.log('✗ Failed to click e-File button');
-          row.getCell(15).value = 'Failed to click e-File button';
-          continue;
+        } catch (closeError) {
+          console.log('⚠️ Error closing old browser:', closeError.message);
+        }
+        
+        // Create a new browser
+        try {
+          browser = await createBrowser();
+          currentPage = await createNewPageSafely(browser);
+          console.log('✅ Browser restarted and new page created successfully');
+        } catch (restartError) {
+          console.log(`❌ Failed to restart browser for ${company}:`, restartError.message);
+          row.getCell(15).value = `Failed - Browser Error: ${restartError.message}`;
+          continue; // Skip this row and continue with next
         }
       }
       
-      await gotoEPayTax(currentPage);
-      await clickNewPaymentButton(currentPage);
-      await clickIncomeTaxProceed(currentPage);
+      // Set download behavior for the new page
+      try {
+        const client = await currentPage.target().createCDPSession();
+        await client.send('Page.setDownloadBehavior', {
+          behavior: 'allow',
+          downloadPath: DOWNLOAD_DIR
+        });
+        console.log('✓ Download behavior configured for new page');
+        console.log(`✓ PDFs will be saved to: ${DOWNLOAD_DIR}`);
+      } catch (downloadConfigError) {
+        console.log('⚠️ Could not configure download behavior:', downloadConfigError.message);
+        console.log('⚠️ PDFs may go to default download folder - will attempt to move them');
+      }
       
-      // Get and log assessment year for debugging
-      const assessmentYear = row.getCell('F').value;
-      console.log(`Assessment Year from Excel (Column F): "${assessmentYear}" (Type: ${typeof assessmentYear})`);
+      // Patch for Node.js 22 to add $x support for the new page
+      if (!currentPage.$x) {
+        currentPage.$x = async function (expression) {
+          return await this.evaluateHandle((exp) => {
+            return document.evaluate(exp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+          }, expression).then(async (handle) => {
+            const length = await (await handle.getProperty('snapshotLength')).jsonValue();
+            const results = [];
+            for (let i = 0; i < length; i++) {
+              const elHandle = await handle.evaluateHandle((h, index) => h.snapshotItem(index), i);
+              results.push(elHandle);
+            }
+            return results;
+          });
+        };
+      }
       
-      // Always select minor head code '300' (Self-Assessment Tax)
-      await selectAssessmentYearAndMinorHead(currentPage, assessmentYear, '300');
-      await clickContinueOnNewPayment(currentPage);
+      console.log(`PDF will be saved to: ${DOWNLOAD_DIR}`);
       
-      // Fill tax details from Excel
-      const taxDetailsFilled = await fillTaxDetails(currentPage, row);
-      
-      if (taxDetailsFilled && taxDetailsFilled.success) {
-        // Save comprehensive challan summary to Excel
-        console.log('\n=== Saving Challan Summary to Excel ===');
+      const success = await login(currentPage, userId, password);
+
+      if (!success) {
+        row.getCell(15).value = 'Login failed';
+        continue;
+      }
+
+      // Navigate to E-Pay Tax after login
+      if (success) {
+        // First, check if we're on the ITR page and need to click e-File
+        console.log('Checking current page after login...');
+        await delay(3000);
         
-        // Column N - CRN
-        if (taxDetailsFilled.crn) {
-          row.getCell('N').value = taxDetailsFilled.crn;
-          console.log(`✓ CRN: ${taxDetailsFilled.crn}`);
+        // Check if we're on the ITR page by looking for the e-File button
+        const eFileButton = await currentPage.$('#e-File');
+        if (eFileButton) {
+          console.log('Detected ITR page, clicking e-File button...');
+          const eFileClicked = await clickEFileButton(currentPage);
+          if (!eFileClicked) {
+            console.log('✗ Failed to click e-File button');
+            row.getCell(15).value = 'Failed to click e-File button';
+            continue;
+          }
         }
         
-        // Column P - PDF Path
-        if (taxDetailsFilled.pdfPath) {
-          row.getCell('P').value = taxDetailsFilled.pdfPath;
-          console.log(`✓ PDF Path: ${taxDetailsFilled.pdfPath}`);
-        }
+        await gotoEPayTax(currentPage);
+        await clickNewPaymentButton(currentPage);
+        await clickIncomeTaxProceed(currentPage);
         
-        // Column Q - Date Created
-        if (taxDetailsFilled.dateCreated) {
-          row.getCell('Q').value = taxDetailsFilled.dateCreated;
-          console.log(`✓ Date Created: ${taxDetailsFilled.dateCreated}`);
-        }
+        // Get and log assessment year for debugging
+        const assessmentYear = row.getCell('F').value;
+        console.log(`Assessment Year from Excel (Column F): "${assessmentYear}" (Type: ${typeof assessmentYear})`);
         
-        // Column R - Created On (from challan)
-        if (taxDetailsFilled.createdOn) {
-          row.getCell('R').value = taxDetailsFilled.createdOn;
-          console.log(`✓ Challan Created On: ${taxDetailsFilled.createdOn}`);
-        }
+        // Always select minor head code '300' (Self-Assessment Tax)
+        await selectAssessmentYearAndMinorHead(currentPage, assessmentYear, '300');
+        await clickContinueOnNewPayment(currentPage);
         
-        // Column S - Valid Till
-        if (taxDetailsFilled.validTill) {
-          row.getCell('S').value = taxDetailsFilled.validTill;
-          console.log(`✓ Valid Till: ${taxDetailsFilled.validTill}`);
-        }
+        // Fill tax details from Excel
+        const taxDetailsFilled = await fillTaxDetails(currentPage, row);
         
-        // Column T - Payment Mode
-        if (taxDetailsFilled.paymentMode) {
-          row.getCell('T').value = taxDetailsFilled.paymentMode;
-          console.log(`✓ Payment Mode: ${taxDetailsFilled.paymentMode}`);
+        if (taxDetailsFilled && taxDetailsFilled.success) {
+          // Save comprehensive challan summary to Excel
+          console.log('\n=== Saving Challan Summary to Excel ===');
+          
+          // Column N - CRN
+          if (taxDetailsFilled.crn) {
+            row.getCell('N').value = taxDetailsFilled.crn;
+            console.log(`✓ CRN: ${taxDetailsFilled.crn}`);
+          }
+          
+          // Column P - PDF Path
+          if (taxDetailsFilled.pdfPath) {
+            row.getCell('P').value = taxDetailsFilled.pdfPath;
+            console.log(`✓ PDF Path: ${taxDetailsFilled.pdfPath}`);
+          }
+          
+          // Column Q - Date Created
+          if (taxDetailsFilled.dateCreated) {
+            row.getCell('Q').value = taxDetailsFilled.dateCreated;
+            console.log(`✓ Date Created: ${taxDetailsFilled.dateCreated}`);
+          }
+          
+          // Column R - Created On (from challan)
+          if (taxDetailsFilled.createdOn) {
+            row.getCell('R').value = taxDetailsFilled.createdOn;
+            console.log(`✓ Challan Created On: ${taxDetailsFilled.createdOn}`);
+          }
+          
+          // Column S - Valid Till
+          if (taxDetailsFilled.validTill) {
+            row.getCell('S').value = taxDetailsFilled.validTill;
+            console.log(`✓ Valid Till: ${taxDetailsFilled.validTill}`);
+          }
+          
+          // Column T - Payment Mode
+          if (taxDetailsFilled.paymentMode) {
+            row.getCell('T').value = taxDetailsFilled.paymentMode;
+            console.log(`✓ Payment Mode: ${taxDetailsFilled.paymentMode}`);
+          }
+          
+          // Update status in Status column (Column O - Status)
+          row.getCell(15).value = 'Challan Created Successfully - Complete Summary Saved';
+          console.log(`✓ Completed full challan process with comprehensive summary for ${company}`);
+          
+        } else if (taxDetailsFilled) {
+          // Partial success - save whatever data we have
+          console.log('\n=== Saving Partial Challan Data to Excel ===');
+          
+          if (taxDetailsFilled.crn) {
+            row.getCell('N').value = taxDetailsFilled.crn;
+            console.log(`✓ CRN: ${taxDetailsFilled.crn}`);
+          }
+          if (taxDetailsFilled.pdfPath) {
+            row.getCell('P').value = taxDetailsFilled.pdfPath;
+          }
+          if (taxDetailsFilled.dateCreated) {
+            row.getCell('Q').value = taxDetailsFilled.dateCreated;
+          }
+          
+          row.getCell(15).value = 'Partial Success - Some data extracted';
+          console.log(`⚠ Partial completion for ${company} - some data saved`);
+        } else {
+          row.getCell(15).value = 'Failed - Could not complete challan process';
+          console.log(`✗ Failed to complete challan process for ${company}`);
         }
-        
-        // Update status in Status column (Column O - Status)
-        row.getCell(15).value = 'Challan Created Successfully - Complete Summary Saved';
-        console.log(`✓ Completed full challan process with comprehensive summary for ${company}`);
-        
-      } else if (taxDetailsFilled) {
-        // Partial success - save whatever data we have
-        console.log('\n=== Saving Partial Challan Data to Excel ===');
-        
-        if (taxDetailsFilled.crn) {
-          row.getCell('N').value = taxDetailsFilled.crn;
-          console.log(`✓ CRN: ${taxDetailsFilled.crn}`);
-        }
-        if (taxDetailsFilled.pdfPath) {
-          row.getCell('P').value = taxDetailsFilled.pdfPath;
-        }
-        if (taxDetailsFilled.dateCreated) {
-          row.getCell('Q').value = taxDetailsFilled.dateCreated;
-        }
-        
-        row.getCell(15).value = 'Partial Success - Some data extracted';
-        console.log(`⚠ Partial completion for ${company} - some data saved`);
-      } else {
-        row.getCell(15).value = 'Failed - Could not complete challan process';
-        console.log(`✗ Failed to complete challan process for ${company}`);
       }
       
       // Close current page and prepare for next row
       console.log('\n=== Preparing for Next Row ===');
-      try {
-        if (currentPage && !currentPage.isClosed()) {
-          console.log('Closing current page...');
-          await currentPage.close();
-          await delay(1000);
-        }
-      } catch (closeErr) {
-        console.log('Error closing page:', closeErr.message);
-      }
+      await closePageSafely(currentPage);
+      currentPage = null;
       
       // Log completion of this row
       console.log(`\n${'='.repeat(80)}`);
       console.log(`COMPLETED ROW ${i}: ${company}`);
+      console.log(`${'='.repeat(80)}`);
+      
+      await delay(2000);
+      
+    } catch (rowError) {
+      // Handle any unexpected errors during row processing
+      console.log(`\n❌ Unexpected error processing ${company}:`, rowError.message);
+      console.log('Stack trace:', rowError.stack);
+      
+      // Update status in Excel
+      row.getCell(15).value = `Failed - Unexpected Error: ${rowError.message}`;
+      
+      // Clean up current page if it exists
+      await closePageSafely(currentPage);
+      currentPage = null;
+      
+      // Log error completion
+      console.log(`\n${'='.repeat(80)}`);
+      console.log(`ERROR COMPLETED ROW ${i}: ${company}`);
       console.log(`${'='.repeat(80)}`);
       
       await delay(2000);
@@ -2438,8 +2801,19 @@ async function main() {
   // Generate summary report
   await generateSummaryReport(sheet, DOWNLOAD_DIR);
   
+  // Save Excel file
   await workbook.xlsx.writeFile(EXCEL_FILE);
-  await browser.close();
+  
+  // Close browser safely
+  try {
+    if (browser && browser.isConnected()) {
+      await browser.close();
+      console.log('✅ Browser closed successfully');
+    }
+  } catch (browserCloseError) {
+    console.log('⚠️ Error closing browser:', browserCloseError.message);
+  }
+  
   console.log("\n=== Automation completed successfully ===");
   console.log(`PDFs saved in: ${DOWNLOAD_DIR}`);
   console.log(`Excel file updated: ${EXCEL_FILE}`);

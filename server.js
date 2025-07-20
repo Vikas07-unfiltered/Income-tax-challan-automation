@@ -91,7 +91,42 @@ app.get('/health', (req, res) => {
 
 // Routes
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const indexPath = path.join(__dirname, 'public', 'index.html');
+  
+  // Check if file exists
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    // Fallback HTML if public folder is missing
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Income Tax Challan Automation</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+          .container { max-width: 600px; margin: 0 auto; }
+          .error { color: #e74c3c; }
+          .info { color: #3498db; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h1>🚀 Income Tax Challan Automation</h1>
+          <p class="error">⚠️ Web interface files are missing from deployment.</p>
+          <p class="info">📥 You can still download the Excel template:</p>
+          <a href="/template" style="display: inline-block; padding: 10px 20px; background: #3498db; color: white; text-decoration: none; border-radius: 5px;">Download Excel Template</a>
+          <p class="info">🔧 The deployment is being updated...</p>
+          <hr>
+          <p><strong>Health Check:</strong> <a href="/health">/health</a></p>
+          <p><strong>Template Download:</strong> <a href="/template">/template</a></p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
 });
 
 app.post('/upload', upload.single('excelFile'), async (req, res) => {
