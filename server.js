@@ -20,8 +20,8 @@ const io = new Server(server, {
   }
 });
 
-// Trust proxy for Railway/Heroku/cloud platforms
-if (process.env.RAILWAY_ENVIRONMENT || process.env.HEROKU_APP_NAME || process.env.RENDER) {
+// Trust proxy for cloud platforms
+if (process.env.HEROKU_APP_NAME || process.env.RENDER) {
   app.set('trust proxy', 1);
 }
 
@@ -36,7 +36,7 @@ app.use(cors());
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
-  trustProxy: process.env.RAILWAY_ENVIRONMENT || process.env.HEROKU_APP_NAME || process.env.RENDER
+  trustProxy: process.env.HEROKU_APP_NAME || process.env.RENDER
 });
 app.use(limiter);
 
@@ -83,7 +83,7 @@ app.get('/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
-    platform: process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local',
+    platform: 'Local',
     node_version: process.version,
     uptime: process.uptime()
   });
@@ -149,6 +149,7 @@ app.post('/upload', upload.single('excelFile'), async (req, res) => {
     // Start automation in background
     setTimeout(() => {
       runAutomation(filePath, sessionId, io);
+      console.log('File uploaded, starting automation...');
     }, 1000);
 
   } catch (error) {
@@ -274,7 +275,13 @@ server.listen(PORT, () => {
   console.log(`📱 Access the web interface at: http://localhost:${PORT}`);
   console.log(`🏢 Company users can access at: http://[your-server-ip]:${PORT}`);
   console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🤖 Cloud Platform: ${process.env.RAILWAY_ENVIRONMENT ? 'Railway' : 'Local'}`);
+  console.log(`🤖 Cloud Platform: Local`);
+}).on('error', (err) => {
+  console.error('Server error:', err);
+  if (err.code === 'EADDRINUSE') {
+    console.log(`Port ${PORT} is already in use. Trying port ${PORT + 1}...`);
+    server.listen(PORT + 1);
+  }
 });
 
 module.exports = { app, server, io };

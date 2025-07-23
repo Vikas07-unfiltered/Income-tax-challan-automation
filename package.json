@@ -8,7 +8,7 @@
     "dev": "nodemon server.js",
     "build": "npm install",
     "automation": "node challan_automation.js",
-    "railway-start": "node challan_automation.js",
+
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": ["income-tax", "challan", "automation", "excel", "puppeteer", "web-app"],
@@ -34,13 +34,5 @@
   "repository": {
     "type": "git",
     "url": "."
-  },
-  "railway": {
-    "build": {
-      "command": "npm install"
-    },
-    "start": {
-      "command": "node challan_automation.js"
-    }
   }
 }

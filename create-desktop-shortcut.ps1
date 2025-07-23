@@ -5,7 +5,7 @@ Write-Host "🚀 Creating Desktop Shortcut for Income Tax Challan Automation..."
 
 # Get current directory
 $currentDir = Get-Location
-$batchFile = Join-Path $currentDir "Income Tax Challan Automation.bat"
+$batchFile = Join-Path $currentDir "start-local-server.bat"
 
 # Desktop path
 $desktopPath = [Environment]::GetFolderPath("Desktop")
@@ -21,10 +21,19 @@ $Shortcut.WorkingDirectory = $currentDir
 $Shortcut.Description = "Income Tax Challan Automation - Company Portal"
 $Shortcut.WindowStyle = 1  # Normal window
 
-# Try to set an icon (using system calculator icon as fallback)
-$iconPath = "$env:SystemRoot\System32\calc.exe"
-if (Test-Path $iconPath) {
-    $Shortcut.IconLocation = "$iconPath,0"
+# Try to set an icon (prefer custom app icon, fallback to system icons)
+$customIconPath = Join-Path $currentDir "app-icon.ico"
+$fallbackIconPath = "$env:SystemRoot\System32\imageres.dll"
+
+if (Test-Path $customIconPath) {
+    $Shortcut.IconLocation = $customIconPath
+    Write-Host "📱 Using custom app icon" -ForegroundColor Cyan
+} elseif (Test-Path $fallbackIconPath) {
+    $Shortcut.IconLocation = "$fallbackIconPath,3"  # Web/Globe icon
+    Write-Host "🌐 Using system web icon" -ForegroundColor Cyan
+} else {
+    $Shortcut.IconLocation = "$env:SystemRoot\System32\calc.exe,0"
+    Write-Host "🔢 Using calculator icon as fallback" -ForegroundColor Yellow
 }
 
 # Save shortcut
@@ -50,8 +59,12 @@ try {
     $StartShortcut.WorkingDirectory = $currentDir
     $StartShortcut.Description = "Income Tax Challan Automation - Company Portal"
     $StartShortcut.WindowStyle = 1
-    if (Test-Path $iconPath) {
-        $StartShortcut.IconLocation = "$iconPath,0"
+    if (Test-Path $customIconPath) {
+        $StartShortcut.IconLocation = $customIconPath
+    } elseif (Test-Path $fallbackIconPath) {
+        $StartShortcut.IconLocation = "$fallbackIconPath,3"
+    } else {
+        $StartShortcut.IconLocation = "$env:SystemRoot\System32\calc.exe,0"
     }
     $StartShortcut.Save()
     Write-Host "✅ Start Menu shortcut also created!" -ForegroundColor Green

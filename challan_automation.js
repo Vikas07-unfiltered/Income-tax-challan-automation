@@ -749,18 +749,32 @@ async function clickIncomeTaxProceed(page) {
 async function selectAssessmentYearAndMinorHead(page, assessmentYear, minorHeadCode = '300') {
   console.log(`Starting year selection for: ${assessmentYear}`);
   
-  // Wait for page to load
+  // Wait for page to load and ensure we're on the correct page
   await delay(3000);
+  
+  // Check if we're on the correct page
+  const currentUrl = page.url();
+  console.log(`Current URL: ${currentUrl}`);
+  
+  // Wait for the page to be fully loaded
+  try {
+    await page.waitForSelector('mat-select, [class*="select"]', { timeout: 10000 });
+    console.log('✓ Page loaded - dropdown elements detected');
+  } catch (waitError) {
+    console.log('⚠️ Timeout waiting for dropdown elements, proceeding anyway...');
+  }
+  
   await page.screenshot({ path: 'before_year_selection.png' });
   
   // First, try to open the dropdown by clicking on the assessment year field
   console.log('Looking for Assessment Year dropdown...');
   
-  // Multiple strategies to open the dropdown
+  // Multiple strategies to open the dropdown (Enhanced with more robust methods)
   let dropdownOpened = false;
   const openStrategies = [
     // Strategy 1: Click on select element with "Select" text
     async () => {
+      console.log('Strategy 1: Looking for "Select" text elements...');
       const elements = await page.$$('*');
       for (const el of elements) {
         try {
@@ -776,22 +790,51 @@ async function selectAssessmentYearAndMinorHead(page, assessmentYear, minorHeadC
       return false;
     },
     
-    // Strategy 2: Click on elements that look like dropdowns
+    // Strategy 2: Click on mat-select elements specifically
     async () => {
-      const dropdownSelectors = [
+      console.log('Strategy 2: Looking for mat-select elements...');
+      const matSelects = await page.$$('mat-select');
+      for (const select of matSelects) {
+        try {
+          const text = await page.evaluate(e => e.textContent?.trim(), select);
+          const isVisible = await page.evaluate(e => {
+            const rect = e.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && rect.top >= 0;
+          }, select);
+          
+          if (isVisible && (text?.includes('Select') || text?.includes('2025') || text === '')) {
+            console.log(`Found visible mat-select with text: "${text}", clicking...`);
+            await select.click();
+            return true;
+          }
+        } catch (e) {}
+      }
+      return false;
+    },
+    
+    // Strategy 3: Click on dropdown trigger elements
+    async () => {
+      console.log('Strategy 3: Looking for dropdown trigger elements...');
+      const triggerSelectors = [
+        '.mat-select-trigger',
+        '.mat-select-value',
+        '.mat-select-arrow',
         '[class*="select"]',
-        '[class*="dropdown"]',
-        'select',
-        'mat-select'
+        '[class*="dropdown"]'
       ];
       
-      for (const selector of dropdownSelectors) {
+      for (const selector of triggerSelectors) {
         try {
           const elements = await page.$$(selector);
           for (const el of elements) {
             const text = await page.evaluate(e => e.textContent?.trim(), el);
-            if (text?.includes('Select') || text?.includes('Assessment')) {
-              console.log(`Clicking dropdown with selector: ${selector}`);
+            const isVisible = await page.evaluate(e => {
+              const rect = e.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0;
+            }, el);
+            
+            if (isVisible && (text?.includes('Select') || text?.includes('Assessment') || text === '')) {
+              console.log(`Clicking dropdown trigger with selector: ${selector}`);
               await el.click();
               return true;
             }
@@ -801,15 +844,41 @@ async function selectAssessmentYearAndMinorHead(page, assessmentYear, minorHeadC
       return false;
     },
     
-    // Strategy 3: JavaScript click on first select-like element
+    // Strategy 4: Force click on first visible dropdown-like element
     async () => {
+      console.log('Strategy 4: Force clicking first visible dropdown...');
+      return await page.evaluate(() => {
+        const selectors = ['mat-select', '[class*="select"]', '[class*="dropdown"]'];
+        
+        for (const selector of selectors) {
+          const elements = document.querySelectorAll(selector);
+          for (const el of elements) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0 && rect.top >= 0) {
+              console.log(`Force clicking element with selector: ${selector}`);
+              el.click();
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+    },
+    
+    // Strategy 5: Click on any "Select" text (broader search)
+    async () => {
+      console.log('Strategy 5: Broader search for "Select" text...');
       return await page.evaluate(() => {
         const elements = document.querySelectorAll('*');
         for (const el of elements) {
-          if (el.textContent?.trim() === 'Select' && 
-              (el.tagName === 'DIV' || el.tagName === 'SPAN')) {
-            el.click();
-            return true;
+          const text = el.textContent?.trim();
+          if (text === 'Select') {
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              console.log('Found clickable "Select" element');
+              el.click();
+              return true;
+            }
           }
         }
         return false;
@@ -817,39 +886,98 @@ async function selectAssessmentYearAndMinorHead(page, assessmentYear, minorHeadC
     }
   ];
   
-  // Try each strategy
-  for (let i = 0; i < openStrategies.length; i++) {
-    console.log(`Trying dropdown opening strategy ${i + 1}/${openStrategies.length}`);
-    try {
-      const success = await openStrategies[i]();
-      if (success) {
-        await delay(2000);
-        // Check if dropdown opened by looking for year options
-        const yearElements = await page.$$('*');
-        let foundYearOptions = false;
-        for (const el of yearElements) {
-          try {
-            const text = await page.evaluate(e => e.textContent?.trim(), el);
-            if (text && /20\d{2}-\d{2}/.test(text)) {
-              foundYearOptions = true;
-              break;
-            }
-          } catch (e) {}
+  // Try each strategy with retry mechanism
+  const maxRetries = 2;
+  for (let retry = 0; retry < maxRetries && !dropdownOpened; retry++) {
+    if (retry > 0) {
+      console.log(`\n🔄 Retry attempt ${retry} for dropdown opening...`);
+      await delay(2000);
+      await page.screenshot({ path: `dropdown_retry_${retry}.png` });
+    }
+    
+    for (let i = 0; i < openStrategies.length; i++) {
+      console.log(`Trying dropdown opening strategy ${i + 1}/${openStrategies.length}`);
+      try {
+        const success = await openStrategies[i]();
+        if (success) {
+          await delay(2000);
+          // Check if dropdown opened by looking for year options
+          const yearElements = await page.$$('*');
+          let foundYearOptions = false;
+          for (const el of yearElements) {
+            try {
+              const text = await page.evaluate(e => e.textContent?.trim(), el);
+              if (text && /20\d{2}-\d{2}/.test(text)) {
+                foundYearOptions = true;
+                break;
+              }
+            } catch (e) {}
+          }
+          if (foundYearOptions) {
+            console.log('✓ Dropdown opened - year options visible');
+            dropdownOpened = true;
+            break;
+          } else {
+            console.log('⚠️ Strategy appeared to succeed but no year options found');
+          }
         }
-        if (foundYearOptions) {
-          console.log('✓ Dropdown opened - year options visible');
-          dropdownOpened = true;
-          break;
-        }
+      } catch (error) {
+        console.log(`Strategy ${i + 1} failed:`, error.message);
       }
-    } catch (error) {
-      console.log(`Strategy ${i + 1} failed:`, error.message);
+      
+      if (dropdownOpened) break;
     }
   }
   
   if (!dropdownOpened) {
+    console.log('❌ All dropdown opening strategies failed. Analyzing page state...');
     await page.screenshot({ path: 'dropdown_open_failed.png' });
-    throw new Error('Could not open Assessment Year dropdown');
+    
+    // Analyze page state for debugging
+    const pageAnalysis = await page.evaluate(() => {
+      const analysis = {
+        url: window.location.href,
+        title: document.title,
+        matSelects: document.querySelectorAll('mat-select').length,
+        selectElements: document.querySelectorAll('[class*="select"]').length,
+        dropdownElements: document.querySelectorAll('[class*="dropdown"]').length,
+        selectTexts: []
+      };
+      
+      // Get all elements with "Select" text
+      const elements = document.querySelectorAll('*');
+      for (const el of elements) {
+        const text = el.textContent?.trim();
+        if (text === 'Select' || text?.includes('Assessment')) {
+          const rect = el.getBoundingClientRect();
+          analysis.selectTexts.push({
+            text: text,
+            tagName: el.tagName,
+            visible: rect.width > 0 && rect.height > 0,
+            className: el.className
+          });
+        }
+      }
+      
+      return analysis;
+    });
+    
+    console.log('📊 Page Analysis:');
+    console.log(`  - URL: ${pageAnalysis.url}`);
+    console.log(`  - Title: ${pageAnalysis.title}`);
+    console.log(`  - mat-select elements: ${pageAnalysis.matSelects}`);
+    console.log(`  - select-like elements: ${pageAnalysis.selectElements}`);
+    console.log(`  - dropdown-like elements: ${pageAnalysis.dropdownElements}`);
+    console.log(`  - Elements with 'Select' text: ${pageAnalysis.selectTexts.length}`);
+    
+    if (pageAnalysis.selectTexts.length > 0) {
+      console.log('📝 Found Select elements:');
+      pageAnalysis.selectTexts.forEach((item, index) => {
+        console.log(`    ${index + 1}. ${item.tagName} - "${item.text}" - Visible: ${item.visible} - Class: ${item.className}`);
+      });
+    }
+    
+    throw new Error(`Could not open Assessment Year dropdown. Found ${pageAnalysis.matSelects} mat-select elements and ${pageAnalysis.selectTexts.length} 'Select' text elements. Check screenshot: dropdown_open_failed.png`);
   }
 
   // Now find and click the target year from the visible dropdown
@@ -1089,26 +1217,27 @@ async function selectAssessmentYearAndMinorHead(page, assessmentYear, minorHeadC
   const paymentSuccess = await page.evaluate(() => {
     console.log('Searching for Self-Assessment Tax (300)...');
     
-    // Method 1: Try to click using the specific mat-option ID
-    const specificOption = document.querySelector('#mat-option-103');
+    // Method 1: Try to click using the specific mat-option ID (corrected selector)
+    console.log('Trying to select Self-Assessment Tax (300) with specific selector: mat-option#mat-option-102');
+    const specificOption = document.querySelector('mat-option#mat-option-102');
     if (specificOption) {
-      console.log('Found Self-Assessment Tax using specific ID: mat-option-103');
+      console.log('✓ Found Self-Assessment Tax using specific ID: mat-option-102');
       try {
         specificOption.click();
-        console.log('Clicked Self-Assessment Tax using specific ID');
+        console.log('✓ Clicked Self-Assessment Tax using specific ID');
         return true;
       } catch (e) {
         console.log('Failed to click specific ID, trying dispatchEvent...');
         try {
           specificOption.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-          console.log('Clicked Self-Assessment Tax using dispatchEvent on specific ID');
+          console.log('✓ Clicked Self-Assessment Tax using dispatchEvent on specific ID');
           return true;
         } catch (e2) {
           console.log('Specific ID click failed, falling back to text search...');
         }
       }
     } else {
-      console.log('mat-option-103 not found, trying alternative selectors...');
+      console.log('mat-option-102 not found, trying alternative selectors...');
     }
     
     // Method 2: Try mat-option elements with Self-Assessment Tax text
@@ -1728,11 +1857,24 @@ async function fillTaxDetails(page, rowData) {
         // Handle Preview page Continue button
         console.log('\n=== Clicking Continue on Preview Page ===');
         
-        const previewContinueClicked = await clickPreviewContinue(page);
+        const previewContinueResult = await clickPreviewContinue(page);
         
-        if (previewContinueClicked) {
+        // Handle object return values from clickPreviewContinue
+        if (previewContinueResult && previewContinueResult.success) {
           console.log('✓ Preview page Continue button clicked successfully!');
           
+          // If clickPreviewContinue already extracted CRN and downloaded PDF, return that result
+          if (previewContinueResult.crn && previewContinueResult.extractResult) {
+            console.log('✓ CRN and PDF already handled by clickPreviewContinue');
+            return {
+              success: true,
+              crn: previewContinueResult.crn,
+              ...previewContinueResult.extractResult,
+              message: 'Challan created successfully via preview continue'
+            };
+          }
+          
+          // Otherwise, continue with the original flow
           // Wait for the final summary page to load
           await delay(3000);
           await page.screenshot({ path: 'final_summary_page.png' });
@@ -1773,109 +1915,126 @@ async function fillTaxDetails(page, rowData) {
   }
 }
 
-// Function to click Continue button on Preview page with human-like behavior
+// Function to click Continue button on Preview page (Simplified)
 async function clickPreviewContinue(page) {
-  console.log('Looking for Continue button on Preview page...');
-  
-  // Wait for preview page to load completely
-  await delay(3000 + Math.random() * 2000); // 3-5 second wait
+  console.log('\n=== Clicking Continue Button on Preview Page (Simplified Approach) ===');
+  await delay(2000);
   await page.screenshot({ path: 'preview_page_loaded.png' });
-  
-  let previewContinueClicked = false;
-  
+
+  console.log('Looking for Continue button on Preview page...');
+  let continueClicked = false;
+
   try {
-    // Try the specific selector provided by user
-    const continueElement = await page.$('.float-right > .largeButton');
-    
-    if (continueElement) {
-      console.log('Found Preview Continue button using specific selector: .float-right > .largeButton');
-      
-      try {
-        // Human-like behavior: read the preview page before clicking
-        console.log('Reading preview page content (human-like pause)...');
-        await delay(2000 + Math.random() * 2000); // 2-4 second reading pause
-        
-        // Scroll to button smoothly (human-like)
-        await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), continueElement);
-        await delay(800 + Math.random() * 600); // Wait for smooth scroll
-        
-        const box = await continueElement.boundingBox();
-        if (box) {
-          // Human-like mouse movement with extra randomness for preview page
-          const offsetX = Math.random() * 25 - 12.5; // -12.5 to +12.5 pixels
-          const offsetY = Math.random() * 25 - 12.5;
-          const targetX = box.x + box.width / 2 + offsetX;
-          const targetY = box.y + box.height / 2 + offsetY;
-          
-          // Extra curved mouse movement (very human-like for important action)
-          await page.mouse.move(targetX - 60, targetY - 40, { steps: 8 });
-          await delay(200 + Math.random() * 300);
-          await page.mouse.move(targetX - 20, targetY - 10, { steps: 6 });
-          await delay(150 + Math.random() * 250);
-          await page.mouse.move(targetX + 5, targetY + 3, { steps: 4 });
-          await delay(100 + Math.random() * 200);
-          await page.mouse.move(targetX, targetY, { steps: 3 });
-          
-          // Human-like hesitation before final click
-          await delay(500 + Math.random() * 500);
-          
-          // Human-like click with longer delay (important action)
-          await page.mouse.click(targetX, targetY, { delay: 100 + Math.random() * 150 });
-          console.log('Clicked Preview Continue button with human-like behavior');
-          previewContinueClicked = true;
-        } else {
-          // Fallback to element click
-          await continueElement.click();
-          console.log('Clicked Preview Continue button with element click');
-          previewContinueClicked = true;
-        }
-      } catch (error) {
-        console.log('Preview Continue button click failed:', error.message);
-      }
-    } else {
-      console.log('Preview Continue button not found with specific selector, trying fallback...');
-      
-      // Fallback to general search
-      const continueButtons = await page.$$('button, a, input[type="submit"], input[type="button"]');
-      
-      for (const btn of continueButtons) {
-        const text = await page.evaluate(el => el.textContent?.trim() || el.value?.trim(), btn);
-        if (text === 'Continue') {
-          console.log('Found Preview Continue button with fallback method');
-          await delay(1000 + Math.random() * 1000); // Human-like pause
-          await btn.click();
-          console.log('Clicked Preview Continue button with fallback method');
-          previewContinueClicked = true;
-          break;
-        }
-      }
+    // Strategy 1: Use the specific selector first
+    const specificButton = await page.$('.float-right > .largeButton');
+    if (specificButton) {
+      console.log('Found Continue button with specific selector. Clicking...');
+      await specificButton.click();
+      continueClicked = true;
     }
-    
-    if (previewContinueClicked) {
-      // Wait for next page to load after clicking Continue
-      await delay(5000 + Math.random() * 2000); // 5-7 second wait
-      await page.screenshot({ path: 'after_preview_continue.png' });
-      
-      // Extract CRN number and download PDF
-      console.log('\n=== Extracting CRN and Downloading PDF ===');
-      
-      const finalResult = await extractCRNAndDownloadPDF(page);
-      
-      if (finalResult.success) {
-        console.log('✓ CRN extracted and PDF downloaded successfully!');
-        return { success: true, crn: finalResult.crn };
+
+    // Strategy 2: Fallback to searching by text if specific selector fails
+    if (!continueClicked) {
+      console.log('Specific selector failed. Searching for button with text "Continue"...');
+      const continueButton = await page.evaluateHandle(() => {
+        const buttons = Array.from(document.querySelectorAll('button, a, input[type=\"submit\"]'));
+        return buttons.find(btn => btn.textContent.trim().toLowerCase() === 'continue');
+      });
+
+      if (continueButton && (await continueButton.asElement())) {
+        console.log('Found Continue button by text. Clicking...');
+        await continueButton.click();
+        continueClicked = true;
       } else {
-        console.log('✗ Failed to extract CRN or download PDF');
-        return { success: false, crn: null };
+        console.log('Could not find Continue button by text either.');
       }
     }
-    
+
   } catch (error) {
-    console.log('Error clicking Preview Continue button:', error.message);
-    await page.screenshot({ path: 'preview_continue_error.png' });
+    console.log(`An error occurred while trying to click the Continue button: ${error.message}`);
+  }
+
+  if (continueClicked) {
+    console.log('✓ Continue button clicked successfully!');
+    console.log('Waiting 5 seconds for the next page to load (standard delay)...');
+    await delay(5000);
+    await page.screenshot({ path: 'after_preview_continue_click.png' });
+    console.log('Wait finished. Assuming page has transitioned.');
+    return { success: true, crn: null, extractResult: null }; // Return success to allow fillTaxDetails to proceed
+  } else {
+    console.log('✗ FAILED to find and click the Continue button on the preview page.');
+    await page.screenshot({ path: 'preview_continue_click_failed.png' });
+    return { success: false };
+  }
+}
+
+
+// Function to wait for page transition from preview to mandate form summary
+async function waitForPageTransition(page, originalUrl, maxWaitTime = 30000) {
+  console.log('Waiting for page transition from preview to mandate form summary...');
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    try {
+      const currentUrl = page.url();
+      const currentTitle = await page.title();
+      
+      console.log(`Current URL: ${currentUrl}`);
+      console.log(`Current Title: ${currentTitle}`);
+      
+      // Check for URL change to mandate-form-summary
+      if (currentUrl.includes('mandate-form-summary')) {
+        console.log('✓ URL changed to mandate-form-summary');
+        return { success: true, reason: 'URL changed to mandate-form-summary' };
+      }
+      
+      // Check for other indicators of successful transition
+      const transitionIndicators = await page.evaluate(() => {
+        const indicators = {
+          mandateFormElements: !!document.querySelector('[class*="mandate"], [id*="mandate"]'),
+          summaryElements: !!document.querySelector('[class*="summary"], [id*="summary"]'),
+          downloadElements: !!document.querySelector('button[onclick*="download"], .download-btn, .defaultButton'),
+          crnElements: !!document.querySelector('[class*="crn"], [id*="crn"], [class*="reference"]'),
+          previewElementsGone: !document.querySelector('.preview, [class*="preview"]'),
+          paymentElements: !!document.querySelector('[class*="payment"], [id*="payment"]'),
+          confirmElements: !!document.querySelector('[class*="confirm"], [id*="confirm"]'),
+          receiptElements: !!document.querySelector('[class*="receipt"], [id*="receipt"]'),
+          successElements: !!document.querySelector('[class*="success"], [id*="success"]')
+        };
+        
+        // Check for content changes indicating new page
+        const bodyText = document.body.textContent.toLowerCase();
+        const hasKeyContent = bodyText.includes('crn') || 
+                             bodyText.includes('download') || 
+                             bodyText.includes('challan') || 
+                             bodyText.includes('generated') ||
+                             bodyText.includes('mandate') ||
+                             bodyText.includes('summary');
+        
+        indicators.hasKeyContent = hasKeyContent;
+        
+        return indicators;
+      });
+      
+      // Check if any transition indicator is true
+      const transitionDetected = Object.entries(transitionIndicators).find(([key, value]) => value);
+      
+      if (transitionDetected) {
+        console.log(`✓ Page transition detected: ${transitionDetected[0]}`);
+        return { success: true, reason: transitionDetected[0] };
+      }
+      
+      // Wait a bit before checking again
+      await delay(1000);
+      
+    } catch (error) {
+      console.log(`Error checking page transition: ${error.message}`);
+      await delay(1000);
+    }
   }
   
-  return previewContinueClicked;
+  console.log('⚠️ Page transition not detected within timeout');
+  return { success: false, reason: 'Timeout waiting for page transition' };
 }
 
 // Function to extract comprehensive challan summary and download PDF
@@ -2012,51 +2171,100 @@ async function extractChallanSummaryAndDownloadPDF(page) {
       'button[class*="download"]',
       'a[class*="download"]',
       '[class*="mandate"] button',
-      'button:contains("Download")',
-      'a:contains("Download")'
+      'button',
+      'a'
     ];
     
     for (const selector of downloadSelectors) {
       try {
-        const downloadElement = await page.$(selector);
-        if (downloadElement) {
-          console.log(`Found download button using selector: ${selector}`);
-          
-          // Human-like interaction before clicking download
-          await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), downloadElement);
-          await delay(800 + Math.random() * 600);
-          
-          const box = await downloadElement.boundingBox();
-          if (box) {
-            // Human-like mouse movement for download action
-            const offsetX = Math.random() * 20 - 10;
-            const offsetY = Math.random() * 20 - 10;
-            const targetX = box.x + box.width / 2 + offsetX;
-            const targetY = box.y + box.height / 2 + offsetY;
+        if (selector === 'button' || selector === 'a') {
+          // For generic selectors, check text content
+          const elements = await page.$$(selector);
+          for (const element of elements) {
+            const text = await page.evaluate(el => el.textContent?.trim().toLowerCase() || '', element);
+            if (text.includes('download') || text.includes('challan') || text.includes('pdf')) {
+              console.log(`Found download button with text: "${text}"`);
+              
+              // Human-like interaction before clicking download
+              await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), element);
+              await delay(800 + Math.random() * 600);
+              
+              const box = await element.boundingBox();
+              if (box) {
+                // Human-like mouse movement for download action
+                const offsetX = Math.random() * 20 - 10;
+                const offsetY = Math.random() * 20 - 10;
+                const targetX = box.x + box.width / 2 + offsetX;
+                const targetY = box.y + box.height / 2 + offsetY;
+                
+                // Curved mouse movement to download button
+                await page.mouse.move(targetX - 40, targetY - 30, { steps: 6 });
+                await delay(150 + Math.random() * 200);
+                await page.mouse.move(targetX + 5, targetY - 5, { steps: 4 });
+                await delay(100 + Math.random() * 150);
+                await page.mouse.move(targetX, targetY, { steps: 3 });
+                
+                // Human-like hesitation before download
+                await delay(500 + Math.random() * 500);
+                
+                // Click download button
+                await page.mouse.click(targetX, targetY, { delay: 100 + Math.random() * 150 });
+                console.log('Clicked download button with human-like behavior');
+                downloadSuccess = true;
+                break;
+              } else {
+                // Fallback to element click
+                await element.click();
+                console.log('Clicked download button with element click');
+                downloadSuccess = true;
+                break;
+              }
+            }
+          }
+        } else {
+          // For specific selectors, click directly
+          const downloadElement = await page.$(selector);
+          if (downloadElement) {
+            console.log(`Found download button using selector: ${selector}`);
             
-            // Curved mouse movement to download button
-            await page.mouse.move(targetX - 40, targetY - 30, { steps: 6 });
-            await delay(150 + Math.random() * 200);
-            await page.mouse.move(targetX + 5, targetY - 5, { steps: 4 });
-            await delay(100 + Math.random() * 150);
-            await page.mouse.move(targetX, targetY, { steps: 3 });
+            // Human-like interaction before clicking download
+            await page.evaluate(el => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), downloadElement);
+            await delay(800 + Math.random() * 600);
             
-            // Human-like hesitation before download
-            await delay(500 + Math.random() * 500);
-            
-            // Click download button
-            await page.mouse.click(targetX, targetY, { delay: 100 + Math.random() * 150 });
-            console.log('Clicked download button with human-like behavior');
-            downloadSuccess = true;
-            break;
-          } else {
-            // Fallback to element click
-            await downloadElement.click();
-            console.log('Clicked download button with element click');
-            downloadSuccess = true;
-            break;
+            const box = await downloadElement.boundingBox();
+            if (box) {
+              // Human-like mouse movement for download action
+              const offsetX = Math.random() * 20 - 10;
+              const offsetY = Math.random() * 20 - 10;
+              const targetX = box.x + box.width / 2 + offsetX;
+              const targetY = box.y + box.height / 2 + offsetY;
+              
+              // Curved mouse movement to download button
+              await page.mouse.move(targetX - 40, targetY - 30, { steps: 6 });
+              await delay(150 + Math.random() * 200);
+              await page.mouse.move(targetX + 5, targetY - 5, { steps: 4 });
+              await delay(100 + Math.random() * 150);
+              await page.mouse.move(targetX, targetY, { steps: 3 });
+              
+              // Human-like hesitation before download
+              await delay(500 + Math.random() * 500);
+              
+              // Click download button
+              await page.mouse.click(targetX, targetY, { delay: 100 + Math.random() * 150 });
+              console.log('Clicked download button with human-like behavior');
+              downloadSuccess = true;
+              break;
+            } else {
+              // Fallback to element click
+              await downloadElement.click();
+              console.log('Clicked download button with element click');
+              downloadSuccess = true;
+              break;
+            }
           }
         }
+        
+        if (downloadSuccess) break;
       } catch (selectorError) {
         console.log(`Download selector ${selector} failed:`, selectorError.message);
       }
@@ -2337,7 +2545,7 @@ async function createBrowser(maxRetries = 3) {
     try {
       const browserConfig = {
         headless: isCloudPlatform ? 'new' : false, // Use new headless mode for better stability
-        defaultViewport: { width: 1366, height: 768 }, // Set explicit viewport for consistency
+        defaultViewport: null, // Allow full screen viewport
         timeout: 120000, // Increase timeout for cloud platforms
         protocolTimeout: 120000, // Add protocol timeout
         args: [
@@ -2386,11 +2594,13 @@ async function createBrowser(maxRetries = 3) {
           '--single-process' // Only use single-process on cloud
         );
       } else {
-        // Local development optimizations
+        // Local development optimizations - Normal window size
         browserConfig.args.push(
-          '--start-maximized',
+          '--window-size=1366,768',
           `--download-default-directory=${DOWNLOAD_DIR}`
         );
+        // Set a normal viewport size
+        browserConfig.defaultViewport = { width: 1366, height: 768 };
       }
       
       console.log(`🚀 Launching browser (attempt ${attempt}/${maxRetries})...`);
@@ -2540,13 +2750,13 @@ async function main() {
   // Setup headers for new columns
   await setupExcelHeaders(sheet);
 
-  let browser = await createBrowser();
-
-  // We'll create a new page for each row instead of reusing one page
+  // We'll create a fresh browser for each row to ensure clean state
+  let browser = null;
   let currentPage = null;
 
   console.log(`\n=== Starting Multi-Row Processing ===`);
   console.log(`Total rows to process: ${sheet.rowCount - 1}`);
+  console.log(`Strategy: Fresh browser instance per row for maximum reliability`);
   
   for (let i = 2; i <= sheet.rowCount; i++) {
     console.log(`\n${'='.repeat(80)}`);
@@ -2593,35 +2803,44 @@ async function main() {
       }
     }
 
-    console.log(`Processing: ${company}`);
+    // Add debugging for row data
+    console.log(`Company: "${company}"`);
+    console.log(`User ID: "${userId}"`);
+    console.log(`Password: "${password}"`);
+    console.log(`Status: "${status}"`);
+    
+    // Check if we have required data
+    if (!company || !userId || !password) {
+      console.log(`❌ Skipping row ${i} - Missing required data (Company: ${!!company}, UserID: ${!!userId}, Password: ${!!password})`);
+      row.getCell(15).value = 'Skipped - Missing required data';
+      continue;
+    }
+    
+    console.log(`✅ Processing: ${company}`);
     
     // Wrap entire row processing in try-catch for robust error handling
     try {
-      // Create a new page for this row with error handling
+      // Create a fresh browser for each row to ensure completely clean state
+      console.log(`\n🚀 Creating fresh browser for ${company}...`);
+      
       try {
+        // Close any existing browser first
+        if (browser && browser.isConnected()) {
+          console.log('🔄 Closing previous browser...');
+          await browser.close();
+          console.log('✅ Previous browser closed');
+          await delay(2000); // Wait for complete cleanup
+        }
+        
+        // Create completely fresh browser instance
+        browser = await createBrowser();
         currentPage = await createNewPageSafely(browser);
-      } catch (pageError) {
-        console.log('❌ Failed to create new page, attempting browser restart...');
+        console.log(`✅ Fresh browser and page created for ${company}`);
         
-        try {
-          // Close the old browser if it exists
-          if (browser && browser.isConnected()) {
-            await browser.close();
-          }
-        } catch (closeError) {
-          console.log('⚠️ Error closing old browser:', closeError.message);
-        }
-        
-        // Create a new browser
-        try {
-          browser = await createBrowser();
-          currentPage = await createNewPageSafely(browser);
-          console.log('✅ Browser restarted and new page created successfully');
-        } catch (restartError) {
-          console.log(`❌ Failed to restart browser for ${company}:`, restartError.message);
-          row.getCell(15).value = `Failed - Browser Error: ${restartError.message}`;
-          continue; // Skip this row and continue with next
-        }
+      } catch (browserError) {
+        console.log(`❌ Failed to create fresh browser for ${company}:`, browserError.message);
+        row.getCell(15).value = `Failed - Browser Creation Error: ${browserError.message}`;
+        continue; // Skip this row and continue with next
       }
       
       // Set download behavior for the new page
@@ -2690,8 +2909,40 @@ async function main() {
         const assessmentYear = row.getCell('F').value;
         console.log(`Assessment Year from Excel (Column F): "${assessmentYear}" (Type: ${typeof assessmentYear})`);
         
+        // Add extra wait and page state check before assessment year selection
+        console.log('\n=== Preparing for Assessment Year Selection ===');
+        await delay(3000);
+        
+        // Take screenshot before assessment year selection
+        await currentPage.screenshot({ path: `before_assessment_year_row_${i}.png` });
+        
+        // Check page state before proceeding
+        const pageState = await currentPage.evaluate(() => {
+          return {
+            url: window.location.href,
+            title: document.title,
+            hasMatSelect: document.querySelectorAll('mat-select').length > 0,
+            hasSelectElements: document.querySelectorAll('[class*="select"]').length > 0,
+            bodyText: document.body.textContent.includes('Assessment Year') || document.body.textContent.includes('Type of Payment')
+          };
+        });
+        
+        console.log('📊 Page State Check:');
+        console.log(`  - URL: ${pageState.url}`);
+        console.log(`  - Title: ${pageState.title}`);
+        console.log(`  - Has mat-select: ${pageState.hasMatSelect}`);
+        console.log(`  - Has select elements: ${pageState.hasSelectElements}`);
+        console.log(`  - Has Assessment/Payment text: ${pageState.bodyText}`);
+        
         // Always select minor head code '300' (Self-Assessment Tax)
-        await selectAssessmentYearAndMinorHead(currentPage, assessmentYear, '300');
+        try {
+          await selectAssessmentYearAndMinorHead(currentPage, assessmentYear, '300');
+          console.log('✅ Assessment Year and Minor Head selection completed');
+        } catch (assessmentError) {
+          console.log(`❌ Assessment Year selection failed for ${company}:`, assessmentError.message);
+          await currentPage.screenshot({ path: `assessment_year_failed_row_${i}.png` });
+          throw assessmentError; // Re-throw to be caught by outer try-catch
+        }
         await clickContinueOnNewPayment(currentPage);
         
         // Fill tax details from Excel
@@ -2764,17 +3015,25 @@ async function main() {
         }
       }
       
-      // Close current page and prepare for next row
-      console.log('\n=== Preparing for Next Row ===');
+      // Close current page and browser completely for next row
+      console.log('\n=== Cleaning up for Next Row ===');
       await closePageSafely(currentPage);
       currentPage = null;
+      
+      // Close browser completely to ensure fresh state for next row
+      if (browser && browser.isConnected()) {
+        console.log('🔄 Closing browser for fresh start...');
+        await browser.close();
+        console.log('✅ Browser closed successfully');
+        browser = null;
+      }
       
       // Log completion of this row
       console.log(`\n${'='.repeat(80)}`);
       console.log(`COMPLETED ROW ${i}: ${company}`);
       console.log(`${'='.repeat(80)}`);
       
-      await delay(2000);
+      await delay(3000); // Longer delay for complete cleanup
       
     } catch (rowError) {
       // Handle any unexpected errors during row processing
@@ -2784,16 +3043,24 @@ async function main() {
       // Update status in Excel
       row.getCell(15).value = `Failed - Unexpected Error: ${rowError.message}`;
       
-      // Clean up current page if it exists
+      // Clean up current page and browser if they exist
       await closePageSafely(currentPage);
       currentPage = null;
+      
+      // Close browser completely even on error to ensure fresh state for next row
+      if (browser && browser.isConnected()) {
+        console.log('🔄 Closing browser after error...');
+        await browser.close();
+        console.log('✅ Browser closed after error');
+        browser = null;
+      }
       
       // Log error completion
       console.log(`\n${'='.repeat(80)}`);
       console.log(`ERROR COMPLETED ROW ${i}: ${company}`);
       console.log(`${'='.repeat(80)}`);
       
-      await delay(2000);
+      await delay(3000); // Longer delay for complete cleanup
     }
 
   }

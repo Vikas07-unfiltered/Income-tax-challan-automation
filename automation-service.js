@@ -105,14 +105,30 @@ async function runAutomation(excelFilePath, sessionId, io) {
         const summaryReportPath = latestDateDir ? 
           path.join(challanPdfDir, latestDateDir, 'Automation_Summary_Report.txt') : null;
         
-        let reportContent = `Income Tax Challan Automation Report\n\nSession ID: ${sessionId}\nCompleted: ${new Date().toISOString()}\n\n`;
+        let reportContent = `Income Tax Challan Automation Report\n`;
+        reportContent += `=====================================\n\n`;
+        reportContent += `Session ID: ${sessionId}\n`;
+        reportContent += `Completed: ${new Date().toISOString()}\n`;
+        reportContent += `Total PDFs Generated: ${pdfFiles.length}\n\n`;
         
         if (summaryReportPath && fs.existsSync(summaryReportPath)) {
           const originalReport = fs.readFileSync(summaryReportPath, 'utf8');
+          reportContent += 'Original Automation Report:\n';
+          reportContent += '================================\n';
           reportContent += originalReport;
         } else {
-          reportContent += 'Processing completed successfully.\nCheck the Excel file for detailed results.';
+          reportContent += 'Processing Details:\n';
+          reportContent += '==================\n';
+          reportContent += 'Processing completed successfully.\n';
+          reportContent += 'Check the Excel file for detailed results.\n';
+          reportContent += `Generated ${pdfFiles.length} PDF challan files.\n`;
         }
+        
+        reportContent += '\n\nFiles Generated:\n';
+        reportContent += '================\n';
+        pdfFiles.forEach((file, index) => {
+          reportContent += `${index + 1}. ${file}\n`;
+        });
         
         fs.writeFileSync(reportPath, reportContent);
         
@@ -124,16 +140,24 @@ async function runAutomation(excelFilePath, sessionId, io) {
         const pdfFiles = fs.existsSync(pdfDir) ? 
           fs.readdirSync(pdfDir).filter(f => f.endsWith('.pdf')) : [];
         
-        emitProgress('🎉 Automation completed successfully!', 100, {
+        // Final completion data
+        const completionData = {
           processed: pdfFiles.length,
           successful: pdfFiles.length,
           failed: 0,
+          totalAmount: 0, // Will be calculated from Excel if needed
           downloadLinks: {
             excel: `/download/${sessionId}/excel`,
             pdfs: `/download/${sessionId}/pdfs`,
             report: `/download/${sessionId}/report`
-          }
-        });
+          },
+          summary: `Processing completed! Generated ${pdfFiles.length} PDF files.`
+        };
+        
+        emitProgress('🎉 Automation completed successfully!', 100, completionData);
+        
+        // Also emit a specific completion event
+        io.to(room).emit('completion', completionData);
         
       } catch (processError) {
         console.error('Processing error:', processError);

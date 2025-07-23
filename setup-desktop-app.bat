@@ -85,7 +85,7 @@ if /i "%choice%"=="y" (
     echo.
     echo 🚀 Starting Income Tax Challan Automation...
     echo.
-    start "" "%~dp0Income Tax Challan Automation.bat"
+    start "" "%~dp0start-local-server.bat"
 ) else (
     echo.
     echo 👍 You can start the app anytime by double-clicking the desktop icon!

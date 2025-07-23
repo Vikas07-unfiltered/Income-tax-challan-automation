@@ -26,6 +26,14 @@ function initializeSocketConnection() {
     socket.on('progress', function(data) {
         handleProgressUpdate(data);
     });
+    
+    socket.on('completion', function(data) {
+        handleCompletion(data);
+    });
+    
+    socket.on('error', function(data) {
+        handleError(data);
+    });
 }
 
 // Setup file upload functionality
@@ -142,48 +150,91 @@ async function uploadFile(file) {
 
 // Handle progress updates from server
 function handleProgressUpdate(data) {
-    const { message, progress, data: additionalData } = data;
+    const { message, progress, data: additionalData, type } = data;
     
-    addLogEntry(message);
-    
+    // Update progress if provided
     if (progress !== null && progress >= 0) {
         updateProgress(progress);
         updateStatus(message, progress);
     }
     
-    // Handle completion
-    if (progress === 100 && additionalData) {
-        handleCompletion(additionalData);
-    }
+    // Add log entry
+    addLogEntry(message);
     
-    // Handle error
-    if (progress === -1) {
-        handleError(additionalData);
-    }
-    
-    // Update stats if available
-    if (additionalData && (additionalData.processed !== undefined)) {
+    // Update statistics if provided
+    if (additionalData) {
         updateStats(additionalData);
+        
+        // Handle completion
+        if (progress === 100 || additionalData.downloadLinks) {
+            handleCompletion(additionalData);
+        }
+        
+        // Handle errors
+        if (progress === -1 || additionalData.error) {
+            handleError(additionalData);
+        }
     }
+    
+    // Show stats grid if we have data
+    if (additionalData && (additionalData.processed !== undefined || additionalData.successful !== undefined || additionalData.failed !== undefined)) {
+        const statsGrid = document.getElementById('statsGrid');
+        if (statsGrid) {
+            statsGrid.style.display = 'grid';
+        }
+    }
+}
+
+// Generate comprehensive processing summary
+function generateProcessingSummary(data) {
+    const total = data.processed || 0;
+    const successful = data.successful || 0;
+    const failed = data.failed || 0;
+    const totalAmount = data.totalAmount || 0;
+    
+    const successRate = total > 0 ? Math.round((successful / total) * 100) : 0;
+    
+    let summary = `Processing Complete! `;
+    summary += `${total} records processed, `;
+    summary += `${successful} successful (${successRate}%), `;
+    summary += `${failed} failed. `;
+    
+    if (totalAmount > 0) {
+        const formattedAmount = new Intl.NumberFormat('en-IN', {
+            style: 'currency',
+            currency: 'INR'
+        }).format(totalAmount);
+        summary += `Total amount processed: ${formattedAmount}.`;
+    }
+    
+    return summary;
 }
 
 // Handle automation completion
 function handleCompletion(data) {
-    updateStatus('🎉 Processing completed successfully!', 100);
+    updateProgress(100);
+    updateStatus('✅ Automation completed successfully!', 100);
+    
+    // Update final stats
+    updateStats(data);
     
     // Store download links
-    downloadLinks = data.downloadLinks;
+    if (data.downloadLinks) {
+        downloadLinks = data.downloadLinks;
+        console.log('Download links stored:', downloadLinks);
+    }
     
-    // Setup download buttons
-    setupDownloadButtons();
+    // Generate comprehensive summary
+    generateProcessingSummary(data);
     
     // Show download section
     showDownloadSection();
     
-    // Show final stats
-    updateStats(data);
+    // Setup download buttons
+    setupDownloadButtons();
     
-    addLogEntry(`✅ Automation completed! Processed: ${data.processed}, Successful: ${data.successful}, Failed: ${data.failed}`);
+    // Add completion log
+    addLogEntry('🎉 All files are ready for download!');
 }
 
 // Handle errors
@@ -224,6 +275,20 @@ function updateStats(data) {
     if (data.failed !== undefined) {
         document.getElementById('failedCount').textContent = data.failed;
     }
+    if (data.totalAmount !== undefined) {
+        const formattedAmount = new Intl.NumberFormat('en-IN', {
+            style: 'currency',
+            currency: 'INR',
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        }).format(data.totalAmount);
+        document.getElementById('totalAmount').textContent = formattedAmount;
+    }
+    
+    // Show detailed summary in logs
+    if (data.summary) {
+        addLogEntry(`📊 Processing Summary: ${data.summary}`);
+    }
 }
 
 // Add log entry
@@ -248,10 +313,21 @@ function setupDownloadButtons() {
 
 // Download file
 function downloadFile(type) {
+    console.log('Download requested for:', type);
+    console.log('Available download links:', downloadLinks);
+    
     if (downloadLinks[type]) {
-        window.open(downloadLinks[type], '_blank');
+        // Create a temporary link to trigger download
+        const link = document.createElement('a');
+        link.href = downloadLinks[type];
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        showAlert(`📥 ${type.charAt(0).toUpperCase() + type.slice(1)} download started!`, 'success');
     } else {
-        showAlert('Download link not available', 'warning');
+        showAlert('Download link not available. Please wait for processing to complete.', 'warning');
     }
 }
 
@@ -292,7 +368,11 @@ function resetForm() {
     document.getElementById('processedCount').textContent = '0';
     document.getElementById('successCount').textContent = '0';
     document.getElementById('failedCount').textContent = '0';
-    document.getElementById('statsGrid').style.display = 'none';
+    document.getElementById('totalAmount').textContent = '₹0';
+    const statsGrid = document.getElementById('statsGrid');
+    if (statsGrid) {
+        statsGrid.style.display = 'none';
+    }
     
     // Show upload section
     showUploadSection();
